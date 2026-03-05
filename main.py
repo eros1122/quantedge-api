@@ -7,23 +7,32 @@ import os
 app = FastAPI()
 
 def fetch_stock_logic(ticker: str):
-    stock = yf.Ticker(ticker)
-    hist = stock.history(period="6mo")
-    info = stock.info
-    raw_news = stock.news[:5]
-    formatted_news = [{"title": n['title'], "publisher": n['publisher']} for n in raw_news]
-    
-    current_price = hist['Close'].iloc[-1]
-    sma_50 = hist['Close'].rolling(window=50).mean().iloc[-1]
-    trend = "Bullish" if current_price > sma_50 else "Bearish"
-    
-    return {
-        "price": round(current_price, 2),
-        "trend": trend,
-        "news": formatted_news,
-        "beta": info.get("beta", "N/A"),
-        "sector": info.get("sector", "Unknown")
-    }
+    try:
+        stock = yf.Ticker(ticker)
+        # Try to get data
+        hist = stock.history(period="1d")
+        info = stock.info
+        
+        if hist.empty:
+            return {"price": 0.0, "trend": "Data Unavailable", "news": [], "beta": 1.0, "sector": "N/A"}
+
+        return {
+            "price": round(hist['Close'].iloc[-1], 2),
+            "trend": "Bullish" if hist['Close'].iloc[-1] > info.get('fiftyDayAverage', 0) else "Bearish",
+            "news": [{"title": n['title'], "publisher": n['publisher']} for n in stock.news[:5]],
+            "beta": info.get("beta", 1.0),
+            "sector": info.get("sector", "Unknown")
+        }
+    except Exception as e:
+        # If Yahoo blocks us (Rate Limit), return this instead of crashing
+        print(f"Error fetching data: {e}")
+        return {
+            "price": "Rate Limited",
+            "trend": "Try again in 5 mins",
+            "news": [{"title": "Yahoo Finance is rate-limiting this server. Please wait.", "publisher": "System"}],
+            "beta": 0,
+            "sector": "N/A"
+        }
 
 @app.get("/api/analyze/{ticker}")
 def analyze(ticker: str):
@@ -63,5 +72,6 @@ def download_report(ticker: str):
     file_path = f"{ticker}_report.pdf"
     pdf.output(file_path)
     return FileResponse(file_path, media_type='application/pdf', filename=file_path)
+
 
 
