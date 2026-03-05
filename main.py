@@ -9,30 +9,31 @@ app = FastAPI()
 def fetch_stock_logic(ticker: str):
     try:
         stock = yf.Ticker(ticker)
-        # Try to get data
-        hist = stock.history(period="1d")
+        hist = stock.history(period="5d")
         info = stock.info
         
         if hist.empty:
             return {"price": 0.0, "trend": "Data Unavailable", "news": [], "beta": 1.0, "sector": "N/A"}
 
+        # Extract news safely
+        news_data = stock.news[:5] if stock.news else []
+        formatted_news = []
+        for n in news_data:
+            formatted_news.append({
+                "title": n.get('title', 'Headline Unavailable'),
+                "publisher": n.get('publisher', 'Unknown Source')
+            })
+
         return {
             "price": round(hist['Close'].iloc[-1], 2),
             "trend": "Bullish" if hist['Close'].iloc[-1] > info.get('fiftyDayAverage', 0) else "Bearish",
-            "news": [{"title": n['title'], "publisher": n['publisher']} for n in stock.news[:5]],
+            "news": formatted_news,
             "beta": info.get("beta", 1.0),
             "sector": info.get("sector", "Unknown")
         }
     except Exception as e:
-        # If Yahoo blocks us (Rate Limit), return this instead of crashing
         print(f"Error fetching data: {e}")
-        return {
-            "price": "Rate Limited",
-            "trend": "Try again in 5 mins",
-            "news": [{"title": "Yahoo Finance is rate-limiting this server. Please wait.", "publisher": "System"}],
-            "beta": 0,
-            "sector": "N/A"
-        }
+        return {"price": "Rate Limited", "trend": "Cooldown", "news": [], "beta": 0, "sector": "N/A"}
 
 @app.get("/api/analyze/{ticker}")
 def analyze(ticker: str):
@@ -48,27 +49,24 @@ def download_report(ticker: str):
     data = fetch_stock_logic(ticker)
     pdf = FPDF()
     pdf.add_page()
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(200, 10, txt=f"QUANTEDGE REPORT: {ticker.upper()}", ln=True, align='C')
     
-    # Header
-    pdf.set_font("Arial", 'B', 20)
-    pdf.cell(200, 10, txt="QUANTEDGE INSTITUTIONAL REPORT", ln=True, align='C')
+    pdf.set_font("Arial", size=12)
     pdf.ln(10)
+    pdf.cell(200, 10, txt=f"Price: ${data['price']} | Trend: {data['trend']}", ln=True)
+    pdf.cell(200, 10, txt=f"Sector: {data['sector']} | Beta: {data['beta']}", ln=True)
     
-    # Data Table Style
+    pdf.ln(10)
     pdf.set_font("Arial", 'B', 12)
-    pdf.cell(100, 10, txt=f"Ticker: {ticker.upper()}", border=1)
-    pdf.cell(100, 10, txt=f"Current Price: ${data['price']}", border=1, ln=True)
-    pdf.cell(100, 10, txt=f"Market Trend: {data['trend']}", border=1)
-    pdf.cell(100, 10, txt=f"Sector: {data['sector']}", border=1, ln=True)
+    pdf.cell(200, 10, txt="Recent Catalysts:", ln=True)
+    pdf.set_font("Arial", size=10)
+    for item in data['news']:
+        pdf.multi_cell(0, 10, txt=f"- {item['title']} ({item['publisher']})")
     
-    # News Section
-    raw_news = stock.news[:5] if stock.news else []
-formatted_news = []
-for n in raw_news:
-    # Use .get() to avoid KeyErrors if 'title' or 'publisher' are missing
-    title = n.get('title', 'Headline Unavailable')
-    publisher = n.get('publisher', 'Unknown Source')
-    formatted_news.append({"title": title, "publisher": publisher})
+    file_path = f"{ticker}_report.pdf"
+    pdf.output(file_path)
+    return FileResponse(file_path, media_type='application/pdf', filename=file_path)
 
 
 
