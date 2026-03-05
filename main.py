@@ -20,8 +20,9 @@ def home():
 
 def calculate_rsi(data, window=14):
     delta = data.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
+    # Adding min_periods=1 ensures we get a value even if data is slightly thin
+    gain = (delta.where(delta > 0, 0)).rolling(window=window, min_periods=1).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=window, min_periods=1).mean()
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
@@ -106,6 +107,7 @@ def download_report(ticker: str):
     file_path = f"{ticker}_report.pdf"
     pdf.output(file_path)
     return FileResponse(file_path, media_type='application/pdf', filename=file_path)
+
 
 
 
