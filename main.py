@@ -11,36 +11,44 @@ app = FastAPI()
 def home():
     return {
         "status": "QuantEdge Institutional Engine Online",
-        "version": "2.0.0",
-        "endpoints": {
-            "analyze": "/api/analyze/{ticker}",
-            "download": "/api/download/{ticker}"
-        }
+        "version": "3.0.0",
+        "sentiment_engine": "Active",
+        "endpoints": {"analyze": "/api/analyze/{ticker}", "download": "/api/download/{ticker}"}
     }
 
 def calculate_rsi(data, window=14):
     delta = data.diff()
-    # Adding min_periods=1 ensures we get a value even if data is slightly thin
     gain = (delta.where(delta > 0, 0)).rolling(window=window, min_periods=1).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=window, min_periods=1).mean()
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
+def calculate_sentiment(headlines):
+    bullish_words = ['surge', 'growth', 'buy', 'profit', 'beat', 'upgrade', 'expansion']
+    bearish_words = ['drop', 'fall', 'lawsuit', 'miss', 'cut', 'downgrade', 'risk', 'debt']
+    
+    score = 0
+    for h in headlines:
+        text = h['title'].lower()
+        if any(word in text for word in bullish_words): score += 1
+        if any(word in text for word in bearish_words): score -= 1
+    
+    if score > 1: return "Strong Bullish", (0, 128, 0)
+    if score < -1: return "Strong Bearish", (255, 0, 0)
+    return "Neutral / Mixed", (128, 128, 128)
+
 def fetch_stock_logic(ticker: str):
     try:
         stock = yf.Ticker(ticker)
-        # Fetching 1 month of data to ensure we have enough for a 14-day RSI
         hist = stock.history(period="1mo")
         info = stock.info
         
         if hist.empty or len(hist) < 14:
             return {"price": 0.0, "trend": "Data Insufficient", "news": [], "beta": 1.0, "rsi": "N/A"}
 
-        # Calculate Momentum (RSI)
+        # Calculate Momentum & Sentiment
         current_rsi = calculate_rsi(hist['Close']).iloc[-1]
-        momentum = "Overbought" if current_rsi > 70 else "Oversold" if current_rsi < 30 else "Neutral"
-
-        # Extract news safely
+        
         news_data = stock.news[:5] if stock.news else []
         formatted_news = []
         for n in news_data:
@@ -48,6 +56,8 @@ def fetch_stock_logic(ticker: str):
                 "title": n.get('title', 'Headline Unavailable'),
                 "publisher": n.get('publisher', 'Unknown Source')
             })
+            
+        sentiment_text, sentiment_color = calculate_sentiment(formatted_news)
 
         return {
             "price": round(hist['Close'].iloc[-1], 2),
@@ -56,11 +66,12 @@ def fetch_stock_logic(ticker: str):
             "beta": info.get("beta", 1.0),
             "sector": info.get("sector", "Unknown"),
             "rsi": round(current_rsi, 2),
-            "momentum": momentum
+            "sentiment": sentiment_text,
+            "sentiment_color": sentiment_color
         }
     except Exception as e:
-        print(f"Error fetching data: {e}")
-        return {"price": "Rate Limited", "trend": "Cooldown", "news": [], "beta": 0, "rsi": "N/A"}
+        print(f"Error: {e}")
+        return {"price": "Rate Limited", "trend": "Cooldown", "news": [], "beta": 0, "rsi": "N/A", "sentiment": "N/A"}
 
 @app.get("/api/analyze/{ticker}")
 def analyze(ticker: str):
@@ -68,9 +79,8 @@ def analyze(ticker: str):
     return {
         "asset_metadata": {"ticker": ticker.upper(), "sector": data.get("sector")},
         "quantitative_risk_metrics": {
-            "volatility": {"beta": data.get("beta")},
-            "trend": data.get("trend"),
-            "momentum": {"rsi": data.get("rsi"), "status": data.get("momentum")}
+            "momentum": {"rsi": data.get("rsi"), "trend": data.get("trend")},
+            "sentiment": {"score": data.get("sentiment")}
         },
         "sentiment_and_macro": {"key_headlines": data.get("news")}
     }
@@ -81,25 +91,22 @@ def download_report(ticker: str):
     pdf = FPDF()
     pdf.add_page()
     
-    # Custom Header
-    pdf.set_font("Arial", 'B', 20)
-    pdf.cell(200, 15, txt="QUANTEDGE INSTITUTIONAL INTELLIGENCE", ln=True, align='C')
-    pdf.set_font("Arial", 'I', 10)
-    pdf.cell(200, 5, txt=f"Ticker: {ticker.upper()} | Momentum Analysis v2.0", ln=True, align='C')
-    pdf.ln(10)
-    
-    # Core Data Table
-    pdf.set_font("Arial", 'B', 12)
-    pdf.set_fill_color(240, 240, 240)
-    pdf.cell(95, 10, txt=f"Current Price: ${data['price']}", border=1, fill=True)
-    pdf.cell(95, 10, txt=f"Market Trend: {data['trend']}", border=1, fill=True, ln=True)
-    pdf.cell(95, 10, txt=f"RSI (14-Day): {data['rsi']}", border=1)
-    pdf.cell(95, 10, txt=f"Momentum: {data.get('momentum', 'N/A')}", border=1, ln=True)
-    
-    # News Section
-    pdf.ln(10)
+    # Sentiment Banner
+    r, g, b = data.get('sentiment_color', (128, 128, 128))
+    pdf.set_fill_color(r, g, b)
+    pdf.set_text_color(255, 255, 255)
     pdf.set_font("Arial", 'B', 14)
-    pdf.cell(200, 10, txt="Institutional Catalysts:", ln=True)
+    pdf.cell(200, 12, txt=f"MARKET SENTIMENT: {data.get('sentiment', 'N/A')}", ln=True, align='C', fill=True)
+    
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(10)
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(95, 10, txt=f"Price: ${data['price']}", border=1)
+    pdf.cell(95, 10, txt=f"RSI: {data['rsi']}", border=1, ln=True)
+    
+    pdf.ln(10)
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(200, 10, txt="Key Market Catalysts:", ln=True)
     pdf.set_font("Arial", size=10)
     for item in data['news']:
         pdf.multi_cell(0, 8, txt=f"- {item['title']} ({item['publisher']})")
@@ -107,6 +114,7 @@ def download_report(ticker: str):
     file_path = f"{ticker}_report.pdf"
     pdf.output(file_path)
     return FileResponse(file_path, media_type='application/pdf', filename=file_path)
+
 
 
 
