@@ -62,16 +62,13 @@ def download_report(ticker: str):
     pdf.cell(100, 10, txt=f"Sector: {data['sector']}", border=1, ln=True)
     
     # News Section
-    pdf.ln(10)
-    pdf.set_font("Arial", 'B', 14)
-    pdf.cell(200, 10, txt="Key Market Catalysts:", ln=True)
-    pdf.set_font("Arial", size=10)
-    for item in data['news']:
-        pdf.multi_cell(0, 8, txt=f"- {item['title']} ({item['publisher']})")
-    
-    file_path = f"{ticker}_report.pdf"
-    pdf.output(file_path)
-    return FileResponse(file_path, media_type='application/pdf', filename=file_path)
+    raw_news = stock.news[:5] if stock.news else []
+formatted_news = []
+for n in raw_news:
+    # Use .get() to avoid KeyErrors if 'title' or 'publisher' are missing
+    title = n.get('title', 'Headline Unavailable')
+    publisher = n.get('publisher', 'Unknown Source')
+    formatted_news.append({"title": title, "publisher": publisher})
 
 
 
